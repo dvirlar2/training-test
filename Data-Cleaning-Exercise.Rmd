@@ -200,6 +200,6 @@ mean_region <- catch_original %>%
   summarize(mean_catch = mean(catch)) %>% 
   left_join(region_defs, by = c("Region" = "code"))
 
-head(mean_region)
+head(mean_region) 
 ```
 
