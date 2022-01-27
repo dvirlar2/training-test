@@ -1,0 +1,24 @@
+---
+title: "Writing Packages"
+author: "Daphne Virlar-Knight"
+date: "1/27/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library}
+# Load packages
+library(devtools)
+library(usethis)
+library(roxygen2)
+```
+
+```{r}
+# Create a package called "mytools"
+setwd('..')
+create_package("mytools")
+```
+
