@@ -10,5 +10,5 @@ output: html_document
   -   [Data Cleaning](Data-Cleaning-Exercise.html)
   -   Data Interpolation and Gap filling
   -   Linear models
-  -   Animal movement models based on telemtry
+  -   Animal movement models based on telemetry
   -   Data visualization
