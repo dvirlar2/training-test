@@ -1,0 +1,218 @@
+---
+title: "Hands On Data Manipulation"
+author: "Daphne Virlar-Knight"
+date: "1/27/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library}
+library(rvest)
+library(readr)
+library(dplyr)
+library(janitor)
+library(ggplot2)
+```
+
+# Overall Objectives
+1. What species of predator is the most abundant? Has this changed through time?
+2. Does the number eggs predated increase with the total number of predators for all species laying nests?
+
+```{r load-data}
+# Load the species table
+webpage <- read_html("https://www.pwrc.usgs.gov/bbl/manual/speclist.cfm")
+
+tbls <- html_nodes(webpage, "table") %>% 
+  html_table(fill = TRUE)
+
+species <- tbls[[1]] %>% 
+  clean_names() %>% 
+  select(alpha_code, common_name) %>% 
+  mutate(alpha_code = tolower(alpha_code))
+
+head(species)
+
+# Load nest data and predator surveys
+nest_origin <- read_csv("Utqiagvik_nest_data.csv")
+predator_origin <- read_csv("Utqiagvik_predator_surveys.csv")
+
+
+# Clean data so that only the columns we need are in the data frames
+nest <- nest_origin %>% 
+  select(year, site, plot, species)
+
+predator <- predator_origin %>% 
+  select(year, site, plot, species, count)
+
+head(nest)
+head(predator)
+
+
+# Check for NA values in the species columnms
+
+n <- which(is.na(nest$species))
+p <- which(is.na(predator$species))
+
+nest[n,]
+predator[p,]
+```
+
+```{r function-troubleshooting}
+# Write a function that will translate species codes into common names
+  # I should do this for both nest and predator data frames
+
+
+#first iteration
+species_name <- function(datfr) {
+  common_name <- left_join(datfr, species, by = c("species" = "alpha_code"))
+}
+
+#second iteration
+bird_name <- function(data1, data2) {
+  new_data1 <- left_join(data1, species, by = c("species" = "alpha_code")) %>% 
+    mutate(common_name = alpha_code)
+  new_data2 <- left_join(data2, species, by = c("species" = "alpha_code")) %>% 
+    mutate(common_name = alpha_code)
+  combined <- full_join(new_data1, new_data2, by = "species")
+        # this would join the input data frame with the species data frame, by telling R that the "species" column in the input frame is the same as the alpha code. This would automatically create an additional column with the common name, but it would be titled "alpha code", so I'll need to change that with mutate.
+  
+}
+
+
+bird_name <- function(data1, data2) {
+  new_data1 <- left_join(data1, species, by = c("species" = "alpha_code")) 
+  new_data2 <- left_join(data2, species, by = c("species" = "alpha_code")) 
+  combined <- full_join(new_data1, new_data2, by = "species")
+        # this would join the input data frame with the species data frame, by telling R that the "species" column in the input frame is the same as the alpha code. This would automatically create an additional column with the common name, but it would be titled "alpha code", so I'll need to change that with mutate.
+  View (combined)
+}
+
+
+# how i would execute the function
+bird_name(predator, nest)
+
+
+predator_join <- left_join(predator, species, by = c("species" = "alpha_code"))
+nest_join <- left_join(nest, species, by = c("species" = "alpha_code"))
+test_full <- full_join(predator_join, nest_join, by = c("species", "common_name", "plot", "site", "year"))
+```
+
+
+```{r function}
+bird_name <- function(nest_input, pred_input) {
+  new_nest <- left_join(nest_input, species, by = c("species" = "alpha_code")) 
+  new_pred <- left_join(pred_input, species, by = c("species" = "alpha_code")) 
+  combined <- full_join(new_nest, new_pred, by = c("species", "common_name", "plot", "site", "year")) %>% 
+    drop_na()
+}
+
+full_data <- bird_name(nest, predator)
+
+```
+
+```{r}
+# Find out predator abundance through time
+
+pred_count <- full_data %>% 
+  group_by(year, common_name) %>% 
+  summarize(pred_count = sum(count))
+
+ggplot(pred_count, aes(x=year, y=pred_count, color=common_name)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Year", y = "Number of Predators", color = "Species") +
+  theme_bw()
+
+```
+
+
+## This is the training booklet's way of handling the bird name assignment and predator count surveys.
+```{r}
+#' Function to add common name to data.frame according to the BBL list of species codes
+
+#' @param df A data frame containing BBL species codes in column `species`
+#' @param species A data frame defining BBL species codes with columns `alpha_code` and `common_name`
+#' @return A data frame with original data df, plus the common name of species
+
+assign_species_name <- function(df, species){
+    return_df <- left_join(df, species, by = c("species" = "alpha_code"))
+    return(return_df)
+}
+
+pred_species <- assign_species_name(predator_origin, species) %>% 
+    group_by(year, common_name) %>% 
+    summarise(pred_count = sum(count, na.rm = T), .groups = "drop") %>% 
+    filter(!is.na(common_name))
+
+# pred_species2 <- assign_species_name(predator, species) %>% 
+#     group_by(year, common_name) %>% 
+#     summarise(pred_count = sum(count, na.rm = T)) %>% 
+#     filter(!is.na(common_name))
+```
+How does `pred_species` differ from the `pred_count` data frame I made?
+```{r}
+head(pred_count); head(pred_species); head(pred_species2)
+```
+
+Data frames seem to be identical with the exception that the first and last data frames are still "grouped"... but what does that mean and why does it matter?
+
+## This is the in-depth function code. Let's analyze it.
+```{r}
+#' Function to add common name to data.frame according to the BBL list of species codes
+
+#' @param df A data frame containing BBL species codes in column `species`
+#' @param species A data frame defining BBL species codes with columns `alpha_code` and `common_name`
+#' @return A data frame with original data df, plus the common name of species
+
+assign_species_name <- function(df, species){
+    if (!("alpha_code" %in% names(species)) |
+        !("species" %in% names(df)) |
+        !("common_name" %in% names(species))){
+      stop("Tables appear to be formatted incorrectly.")
+    }  
+  
+    return_df <- left_join(df, species, by = c("species" = "alpha_code"))
+    
+    if (nrow(return_df) > nrow(df)){
+      warning("Joined table has more rows than original table. Check species table for duplicated code values.")
+    }
+    
+    if (length(which(is.na(return_df$common_name))) > 0){
+      x <- length(which(is.na(return_df$common_name)))
+      warning(paste("Common name has", x, "rows containing NA"))
+    }
+    
+    return(return_df)
+        
+}
+```
+
+
+## Does the number of eggs predated increase with the total number of predators for all species laying nests?
+```{r}
+# Calculate number of eggs predated by year and species
+nests_species <- assign_species_name(nest_origin, species) %>% 
+  group_by(common_name, year) %>% 
+  summarize(total_predated = sum(number_eggs_predated, na.rm = T),
+            .groups = "drop") %>% 
+  filter(!is.na(common_name))
+
+# Calculate total number of predators across all species by year
+pred_total <- pred_species %>% 
+  group_by(year) %>% 
+  summarize(pred_count = sum(pred_count, na.rm = T), .groups = "drop")
+
+# Join egg predation data to total predator data
+nest_pred <- left_join(nests_species, pred_total, by = "year")
+
+# Plot the number of eggs predated by total predators, faceted over species
+ggplot(nest_pred, aes(x = pred_count, y = total_predated)) +
+  geom_point() +
+  facet_wrap(~common_name, scales = "free_y", ncol = 2) +
+  labs(x = "Number of Predators", y = "Number of Eggs Predated") +
+  theme_bw()
+```
+
