@@ -1,7 +1,7 @@
 Package: mypaper
 Title: Test Compendium
 Version: 0.0.0.9000
-Authors@R: 
+Authors@R:
     person("Daphne", "Virlar-Knight", , "virlar-knight@nceas.ucsb.edu", role = c("aut", "cre"))
 Description: This is a beginning setup of a compendium to get used to how they operate, and how useful they can be.
 License: MIT + file LICENSE
@@ -10,3 +10,7 @@ Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.1.2
+Imports: bookdown,
+    here
+Suggests: devtools,
+    git2r
