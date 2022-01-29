@@ -1,0 +1,303 @@
+---
+title: "Geospatial Analysis in R"
+author: "Daphne Virlar-Knight"
+date: "1/28/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The goal of this tutorial is to use a shapefile of Alaska regions and data on population in Alaska by community to create a map using Alaska's regional boundaries, community locations and population, and Alaska's rivers.
+
+```{r library}
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(leaflet)
+library(scales)
+library(ggmap)
+```
+
+```{r}
+# Read in the data and look at a plot of it
+# Can read in shapefiles using read_sf
+ak_regions <- read_sf("shapefiles/ak_regions_simp.shp")
+
+plot(ak_regions)
+
+# Can also examine classes 
+class(ak_regions)
+
+# Spatial data contains spatial metadata. This includes geometry type, dimension, bbox(bounding box), epsg(SRID)(?), proj4string(?), and typically an additional column named geometry.
+head(ak_regions)
+```
+
+## Coordinate Reference System
+A Coordinate Reference System (crs) contains both a <u>datum</u> and a <u>projection</u>. The datum is <i>where</i> the data draw, and the projection is <i>how</i> the data draw.
+  -   <b><u>Datum:</b></u> The datum is how you georeference your points in 3D onto a spheroid. In other words, the datum defines which model is used to represent the earth's surface and where that model is positioned relative to the surface. 
+  -   <b><u>Projection:</b></u> A projection is how these points are mathematically transformed to represent the georeferenced point on a flat piece of paper. Think of peeling an orange, and trying to lay the peel flat against a desk. Depending on how flat or weirdly bumpy the desk is (mimicking hills and such), the peel would have to be cut into different distinct shapes. The shape in which the peel is cut to lay flat on the table is like the projection for a datum.
+<br>
+
+All projections require a datum, but not all datums require a projection. An unprojected datum is a geographic coordinate system. Coordinates in latitude/longitude use a geographic (unprojected) coordinate system. One of the most commonly used geographic coordinate systems is WGS 1984.
+
+```{r}
+# Let's look at the crs of the alaska regions shapefile.
+st_crs(ak_regions)
+```
+
+A convenient way to reference crs quickly is by using the EPSG code, a number that represents a standard projection and datum. Here are a few common EPSG codes we may use in the ADC:
+  -   3338: Alaska Albers
+  -   4326: WGS84 (World Geodetic System in 1984), used in GPS
+  -   3857: Psuedo-Mercator, used in Google Maps, OpenStreetMap, Bing, ArcGIS, and ESRI
+<br>
+You will often need to transform your geospatial data from one coordinate system to another. The `st_transform` function does this quickly for us. You may have noticed the maps above looked wonky because of the dateline. We might want to set a different projection for this data so it plots nicer. A good one for Alaska is called the Alaska Albers projection, with an EPSG code of 3338.
+
+```{r}
+# Transform the datum 
+ak_regions_3338 <- ak_regions %>% 
+  st_transform(crs = 3338)
+
+# Check the crs to make sure it changed
+st_crs(ak_regions_3338)
+
+plot(ak_regions_3338)
+```
+
+## Tidyverse and Shapefiles
+Since `sf` objects are data.fames, they play nicely with packages in the tidyverse. Here are a few examples.
+
+```{r}
+# Select
+ak_regions_3338 %>% 
+  select(region)
+    # Note: The geometry column will stay with your shapefile object even if it is not called explicitly.
+
+# Filter
+ak_regions_3338 %>% 
+  filter(region == "Southeast")
+```
+
+## How many people live in each Alaska region?
+```{r}
+# Read in the city data from the csv, and turn it in a shapefile object
+pop <- read.csv("shapefiles/alaska_population.csv")
+
+# The st_join function is a spatial left join. The argument for both the left and right tables are objects of class sf, which means we will first need to turn our population data.frame with latitude and longitude corrdinates into an sf object. 
+
+#Use st_as_sf to create shapefile from the pop csv we just read in. Assume that the coordinates are in WGS84, which has a crs number of 4236.
+pop_4326 <- st_as_sf(pop,
+                     coords = c('lng', 'lat'),
+                     crs = 4326,
+                     remove = F) 
+                        # remove = F ensures that the geometry column retains original lat/lng
+
+head(pop_4326)
+
+# Now we're ready to join. There are many join functions, and which one we use is determined by what type of operation we want to do, and the geometries of the shapefiles. 
+
+# In this case, we want to find what region each city falls within, so we'll use st_within.
+pop_joined <- st_join(pop_4326, ak_regions_3338, join = st_within)
+
+# The error code st_crs(x) == st_crs(y) is not TRUE is telling us that our coordinate systems are different from one another. Let's fix that using the transform function, and projecting our population object in Alaska Albers.
+pop_3338 <- st_transform(pop_4326, crs = 3338)
+
+pop_joined <- st_join(pop_3338, ak_regions_3338, join = st_within)
+
+head(pop_joined)
+
+```
+
+# Group_By and Summarize with Spatial Data
+```{r}
+pop_region <- pop_joined %>% 
+  as.data.frame() %>% 
+    # this is do remove sticky geometry, as described in the tidyverse help page
+  group_by(region) %>% 
+  summarize(total_pop = sum(population))
+
+head(pop_region)
+
+# Join the pop_region back to the alaska region data to get our geometries back
+pop_region_3338 <- left_join(ak_regions_3338, pop_region)
+
+head(pop_region_3338)
+  # Column with population data is total_pop
+
+
+# plot to check
+plot(pop_region_3338) # plots all four maps
+plot(pop_region_3338["total_pop"]) # plots only the population map
+```
+
+```{r}
+# Calculate the population of Alaska by management area, rather than region
+pop_mgmt_3338 <- pop_region_3338 %>% 
+  group_by(mgmt_area) %>% 
+  summarise(total_pop = sum(total_pop))
+    # Why can we take this from pop_region_3338 instead of going back to the beginning? We can think of this kind of like we're just changing the symbology in Arc. The pop_region_3338 data frame has a column with mgmt_area data available, and total pop by region. And regions are mutually exclusive to ONE management area. Which mean we can take that data frame, and re-group it basically by management area, and sum the total pop without worry of overlap between regions.
+
+head(pop_mgmt_3338)
+
+plot(pop_mgmt_3338["total_pop"])
+  # This shows that the region geometries where combined into a single polygon for each management area. If we wanted to keep the original region geometeries (they would show up as boundary layers), we can specify that when writing our new data frame.
+
+pop_mgmt_3338 <- pop_region_3338 %>% 
+  group_by(mgmt_area) %>% 
+  summarise(total_pop = sum(total_pop), do_union = F)
+
+plot(pop_mgmt_3338["total_pop"])
+  # Our map is color coded by management area, but we can still see the regions boundaries within. 
+
+# Write the file! Save the spatial object to disk.
+write_sf(pop_region_3338, "shapefiles/ak_regions_populations.shp", delete_layer = TRUE)
+```
+
+# Visualize with ggplot
+```{r}
+# Make a GGPlot of alaska's population by regions
+ggplot(pop_region_3338) +
+  geom_sf(aes(fill = total_pop)) +
+  theme_bw() +
+  labs(fill = "Total Population") +
+  scale_fill_continuous(low = "khaki", high = "firebrick", labels = comma)
+```
+
+```{r}
+# Make a ggplot like the one above, but with regional population (above; polygons), city locations (points), and rivers (linestrings)
+
+
+# load rivers data
+rivers_3338 <- read_sf("shapefiles/ak_rivers_simp.shp")
+st_crs(rivers_3338) # checking the crs
+
+ggplot() + 
+  geom_sf(data = pop_region_3338, aes(fill = total_pop)) +
+  geom_sf(data = rivers_3338, aes(size = StrOrder), color = "black") +
+  geom_sf(data = pop_3338, aes(), size = 0.5) +
+  scale_size(range = c(0.1, 0.2), guide = F) +
+  theme_bw() +
+  labs(fill = "Total Population") +
+  scale_fill_continuous(low = "khaki", high = "firebrick", labels = comma)
+
+  
+```
+
+```{r}
+# Incorporate base maps
+
+# To use basemaps from Google Maps, Stamen, OpenStreetMap, and others, we need our data in the same datum(?) as theirs, which is EPSG 3857
+pop_3857 <- pop_3338 %>% 
+  st_transform(crs = 3857)
+
+
+# We need to grab a base map from the Stamen map tile server covering our region of interest, but we have to transform the bounding box. Leeeeet's write a function.
+
+# Define a function to fix the bounding box to be in EPSG:3857
+# See https://github.com/dkahle/ggmap/issues/160#issuecomment-397055208
+
+ggmap_bbox_to_3857 <- function(map) {
+  if (!inherits(map, "ggmap")) stop("map must be a ggmap object")
+  # Extract the bounding box (in lat/lon) from the ggmap to a numeric vector, 
+  # and set the names to what sf::st_bbox expects:
+  map_bbox <- setNames(unlist(attr(map, "bb")), 
+                       c("ymin", "xmin", "ymax", "xmax"))
+  
+  # Convert the bbox to an sf polygon, transform it to 3857, 
+  # and convert back to a bbox (convoluted, but it works)
+  bbox_3857 <- st_bbox(st_transform(st_as_sfc(st_bbox(map_bbox, crs = 4326)), 3857))
+  
+  # Overwrite the bbox of the ggmap object with the transformed coordinates 
+  attr(map, "bb")$ll.lat <- bbox_3857["ymin"]
+  attr(map, "bb")$ll.lon <- bbox_3857["xmin"]
+  attr(map, "bb")$ur.lat <- bbox_3857["ymax"]
+  attr(map, "bb")$ur.lon <- bbox_3857["xmax"]
+  map
+}
+
+
+# Next, define the bounding box of interest. 
+bbox <- c(-170, 52, -130, 64)   # This is roughly southern Alaska
+
+# Then get the Stamen basemap, using the boundary box described above for the extent
+ak_map <- get_stamenmap(bbox, zoom = 4)
+
+# Now run the above extent, which is JUST a basemap at this point, through the function we just created to get the bounding box in the right projection (EPSG 3857)
+ak_map_3857 <- ggmap_bbox_to_3857(ak_map)
+
+
+# Finally, we can plot the base raster map, along with the population data overlayed. This can be done now, and not earlier, because now everything is in the same projection.
+ggmap(ak_map_3857) +  # this is the basemap
+  geom_sf(data = pop_3857, aes(color = population), inherit.aes = F) +
+  scale_color_continuous(low = "khaki", high = "firebrick", labels = comma)
+
+
+```
+
+# Visualizing shapefile objects with leaflet
+```{r}
+# Define a leaflet projection for Alaska Albers, and save it as a variable to use later.
+epsg3338 <- leaflet::leafletCRS(
+  crsClass = "L.Proj.CRS",
+  code = "EPSG:3338",
+  proj4def =  "+proj=aea +lat_1=55 +lat_2=65 +lat_0=50 +lon_0=-154 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs",
+  resolutions = 2^(16:7))
+
+
+# Leaflet requires that we use an unprojected coordinate system, so we need to use st_transform to get back to WGS84
+pop_region_4326 <- pop_region_3338 %>% 
+  st_transform(crs = 4326)
+
+# Now we can view using leaflet
+leaflet(options = leafletOptions(crs = epsg3338)) %>%
+        addPolygons(data = pop_region_4326, 
+                    fillColor = "gray",
+                    weight = 1)
+
+
+# Let,s add labels, legends, and a color scale.
+
+# Create a custom color scale!
+pal <- colorNumeric(palette = "Reds", domain = pop_region_4326$total_pop)
+
+m <- leaflet(options = leafletOptions(crs = epsg3338)) %>% 
+  addPolygons(data = pop_region_4326,
+              fillColor = ~pal(total_pop),
+              weight = 1,
+              color = "black",
+              fillOpacity = 1,
+              label = ~region) %>% 
+  addLegend(position = "bottomleft",
+            pal = pal,
+            values = range(pop_region_4326$total_pop),
+            title = "Total Population")
+
+m
+
+
+# Nooooow let's add individual communities, with popup labels showing population!
+m <- leaflet(options = leafletOptions(crs = epsg3338)) %>%
+        addPolygons(data = pop_region_4326, 
+                    fillColor = ~pal(total_pop),
+                    weight = 1,
+                    color = "black",
+                    fillOpacity = 1) %>% 
+        addCircleMarkers(data = pop_4326,
+                         lat = ~lat,
+                         lng = ~lng,
+                         radius = ~log(population/500), # arbitrary scaling
+                         fillColor = "gray",
+                         fillOpacity = 1,
+                         weight = 0.25,
+                         color = "black",
+                         label = ~paste0(pop_4326$city, ", population ", comma(pop_4326$population))) %>%
+        addLegend(position = "bottomleft",
+                  pal = pal,
+                  values = range(pop_region_4326$total_pop),
+                  title = "Total Population")
+
+m
+
+```
+
